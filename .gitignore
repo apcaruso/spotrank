@@ -1,0 +1,36 @@
+# Build outputs
+spotrank
+*.exe
+*.out
+*.test
+
+# Go workspace/cache artifacts
+bin/
+pkg/
+vendor/
+
+# Coverage/profiling
+coverage.out
+*.cover
+*.prof
+
+# Generated reports
+ranked.csv
+*_ranked.csv
+*.log
+
+# Local input data
+*.csv
+!example.csv
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment/local config
+.env
+.env.*
