@@ -22,7 +22,8 @@ type Track struct {
 
 	SaveRate           float64
 	StreamsPerListener float64
-	PlaylistAddRate    float64
+	SaveLift           float64
+	RepeatLift         float64
 	AgeDays            int
 	Recency            float64
 
@@ -44,6 +45,7 @@ type Cols struct {
 type Config struct {
 	Top          int
 	MinListeners int
+	Proven       int
 	Out          string
 	Inspect      bool
 	CSVInfo      bool
@@ -66,6 +68,7 @@ func main() {
 	var cfg Config
 	flag.IntVar(&cfg.Top, "top", 5, "number of tracks to print")
 	flag.IntVar(&cfg.MinListeners, "min-listeners", 500, "listeners needed before a track is high-confidence")
+	flag.IntVar(&cfg.Proven, "proven", 2000, "listeners needed before a track can be scale or reach")
 	flag.StringVar(&cfg.Out, "out", "", "write full ranked CSV to path")
 	flag.BoolVar(&cfg.Inspect, "inspect", false, "print detected columns and exit")
 	flag.BoolVar(&cfg.CSVInfo, "csv-info", false, "print CSV dialect and first rows")
@@ -107,7 +110,7 @@ func main() {
 		die("no usable rows found")
 	}
 
-	score(tracks, cfg.MinListeners, cols)
+	score(tracks, cfg, cols)
 	sort.SliceStable(tracks, func(i, j int) bool { return tracks[i].Score > tracks[j].Score })
 	printReport(tracks, cfg, cols)
 
@@ -121,7 +124,7 @@ func main() {
 
 func splitArgs(args []string) (string, []string, error) {
 	needValue := map[string]bool{
-		"-top": true, "-min-listeners": true, "-out": true,
+		"-top": true, "-min-listeners": true, "-proven": true, "-out": true,
 		"-song": true, "-listeners": true, "-streams": true,
 		"-saves": true, "-playlist-adds": true, "-release-date": true,
 	}
@@ -167,6 +170,7 @@ Examples:
   spotrank songs.csv
   spotrank songs.csv -inspect
   spotrank songs.csv -top 10 -min-listeners 1000
+  spotrank songs.csv -proven 5000
   spotrank songs.csv -out ranked.csv
 
 Required columns, auto-detected case-insensitively:
@@ -300,27 +304,24 @@ func parse(row []string, c Cols) (*Track, error) {
 		t.Recency = recency(t.AgeDays)
 	}
 	if listeners > 0 {
-		t.SaveRate = float64(saves) / float64(listeners)
+		// Playlist adds count as saves (0 when the column is missing).
+		t.SaveRate = float64(saves+t.PlaylistAdds) / float64(listeners)
 		t.StreamsPerListener = float64(streams) / float64(listeners)
-		t.PlaylistAddRate = float64(t.PlaylistAdds) / float64(listeners)
 	}
 	return t, nil
 }
 
-func score(tracks []*Track, minListeners int, cols Cols) {
+func score(tracks []*Track, cfg Config, cols Cols) {
+	peerLifts(tracks)
+
 	metrics := []Metric{
 		{"listeners", 0.25, values(tracks, func(t *Track) float64 { return float64(t.Listeners) })},
 		{"streams", 0.15, values(tracks, func(t *Track) float64 { return float64(t.Streams) })},
-		{"save_rate", 0.30, values(tracks, func(t *Track) float64 { return t.SaveRate })},
-		{"streams_per_listener", 0.20, values(tracks, func(t *Track) float64 { return t.StreamsPerListener })},
+		{"save_lift", 0.30, values(tracks, func(t *Track) float64 { return t.SaveLift })},
+		{"repeat_lift", 0.20, values(tracks, func(t *Track) float64 { return t.RepeatLift })},
 	}
-	if cols.PlaylistAdds >= 0 {
-		metrics = append(metrics, Metric{"playlist_add_rate", 0.10, values(tracks, func(t *Track) float64 { return t.PlaylistAddRate })})
-	} else if cols.ReleaseDate >= 0 {
+	if cols.ReleaseDate >= 0 {
 		metrics = append(metrics, Metric{"recency", 0.10, values(tracks, func(t *Track) float64 { return t.Recency })})
-	}
-	if cols.PlaylistAdds >= 0 && cols.ReleaseDate >= 0 {
-		metrics = append(metrics, Metric{"recency", 0.05, values(tracks, func(t *Track) float64 { return t.Recency })})
 	}
 
 	total := 0.0
@@ -332,38 +333,90 @@ func score(tracks []*Track, minListeners int, cols Cols) {
 	for _, m := range metrics {
 		ranks := ranks(m.Values)
 		for i := range tracks {
-			scores[i] += (m.Weight / total) * ranks[i]
+			// The explicit conversion stops the compiler fusing this into an
+			// FMA, so tied scores sort the same on every platform (and in web/).
+			scores[i] += float64((m.Weight / total) * ranks[i])
 		}
 	}
 
 	for i, t := range tracks {
-		t.LowConfidence = t.Listeners < minListeners
+		t.LowConfidence = t.Listeners < cfg.MinListeners
 		t.Score = scores[i]
 		if t.LowConfidence {
 			t.Score *= 0.75
 		}
-		t.Category, t.Reason = classify(t)
+		t.Category, t.Reason = classify(t, cfg.Proven)
 	}
 }
 
-func classify(t *Track) (string, string) {
-	sr := t.SaveRate
-	spl := t.StreamsPerListener
+// peerCount is how many tracks of similar audience size a track is compared with.
+const peerCount = 6
+
+// peerLifts compares each track's save rate and streams per listener with the
+// tracks closest to it in listeners (about half above, half below). Small
+// tracks are heard mostly by fans and save far more than big ones, so a fixed
+// threshold would mean different things at different sizes.
+func peerLifts(tracks []*Track) {
+	byListeners := append([]*Track(nil), tracks...)
+	sort.SliceStable(byListeners, func(i, j int) bool { return byListeners[i].Listeners < byListeners[j].Listeners })
+
+	n := len(byListeners)
+	for i, t := range byListeners {
+		lo := max(0, min(i-peerCount/2, n-1-peerCount))
+		hi := min(n, lo+peerCount+1)
+		var saveRates, spls []float64
+		for _, p := range byListeners[lo:hi] {
+			if p != t {
+				saveRates = append(saveRates, p.SaveRate)
+				spls = append(spls, p.StreamsPerListener)
+			}
+		}
+		t.SaveLift = lift(t.SaveRate, median(saveRates))
+		t.RepeatLift = lift(t.StreamsPerListener, median(spls))
+	}
+}
+
+func lift(v, ref float64) float64 {
+	if ref <= 0 {
+		return 1
+	}
+	return v / ref
+}
+
+func median(v []float64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), v...)
+	sort.Float64s(s)
+	m := len(s) / 2
+	if len(s)%2 == 1 {
+		return s[m]
+	}
+	return (s[m-1] + s[m]) / 2
+}
+
+// Below this many listeners a track has no usable signal, even as niche.
+const nicheMinListeners = 100
+
+func classify(t *Track, proven int) (string, string) {
+	sl, rl, spl := t.SaveLift, t.RepeatLift, t.StreamsPerListener
+	isProven := t.Listeners >= proven
 	switch {
-	case t.LowConfidence && sr >= 0.10:
-		return "niche", "low volume, but unusually high save rate"
+	case t.LowConfidence && t.Listeners >= nicheMinListeners && sl >= 1.25 && rl >= 1.0:
+		return "niche", fmt.Sprintf("small sample, but saves %.1f× similar-size tracks", sl)
 	case t.LowConfidence:
 		return "ignore", "sample too small for paid scaling"
-	case sr >= 0.06 && spl >= 1.70:
-		return "scale", "high save rate and strong repeat listening"
-	case sr >= 0.05 && spl >= 1.50:
-		return "test", "good intent signals; test with small budget"
-	case t.Listeners >= 5000 && sr >= 0.035:
-		return "reach", "large audience and acceptable save rate"
-	case spl >= 2.0:
-		return "test", "repeat listening is strong"
+	case isProven && sl >= 1.1 && rl >= 1.0 && spl >= 1.5:
+		return "scale", fmt.Sprintf("proven audience; saves %.1f× and repeats %.1f× similar-size tracks", sl, rl)
+	case sl >= 1.1 && rl >= 0.95 && spl >= 1.5 && !isProven:
+		return "test", fmt.Sprintf("saves %.1f× similar-size tracks; not enough volume to scale yet", sl)
+	case sl >= 1.1 && rl >= 0.95 && spl >= 1.5:
+		return "test", fmt.Sprintf("saves %.1f× similar-size tracks, but repeat listening is only average", sl)
+	case isProven && sl >= 0.8:
+		return "reach", fmt.Sprintf("large audience; saves %.1f× similar-size tracks", sl)
 	default:
-		return "ignore", "weak paid-acquisition signal"
+		return "ignore", fmt.Sprintf("weak intent for its size: saves %.1f×, repeats %.1f× similar-size tracks", sl, rl)
 	}
 }
 
@@ -415,7 +468,8 @@ func printReport(tracks []*Track, cfg Config, cols Cols) {
 
 	fmt.Printf("Loaded %d tracks\n", len(tracks))
 	fmt.Printf("Ranking mode: meta-ads\n")
-	fmt.Printf("Minimum listeners: %d\n\n", cfg.MinListeners)
+	fmt.Printf("Minimum listeners: %d\n", cfg.MinListeners)
+	fmt.Printf("Proven audience: %d listeners\n\n", cfg.Proven)
 	fmt.Printf("Top %d ad candidates:\n\n", n)
 
 	for i := 0; i < n; i++ {
@@ -427,7 +481,7 @@ func printReport(tracks []*Track, cfg Config, cols Cols) {
 			fmt.Printf(" | Playlist adds: %d", t.PlaylistAdds)
 		}
 		fmt.Println()
-		fmt.Printf("   Save rate: %.1f%% | Streams/listener: %.2f", 100*t.SaveRate, t.StreamsPerListener)
+		fmt.Printf("   Save rate: %.1f%% (%.1f× similar) | Streams/listener: %.2f (%.1f× similar)", 100*t.SaveRate, t.SaveLift, t.StreamsPerListener, t.RepeatLift)
 		if cols.ReleaseDate >= 0 {
 			fmt.Printf(" | Release: %s", t.ReleaseDate)
 		}
@@ -481,9 +535,9 @@ func writeRankedCSV(path string, tracks []*Track) error {
 	w := csv.NewWriter(f)
 	defer w.Flush()
 
-	w.Write([]string{"rank", "song", "score", "category", "reason", "listeners", "streams", "saves", "playlist_adds", "save_rate", "streams_per_listener", "release_date", "low_confidence"})
+	w.Write([]string{"rank", "song", "score", "category", "reason", "listeners", "streams", "saves", "playlist_adds", "save_rate", "streams_per_listener", "save_lift", "repeat_lift", "release_date", "low_confidence"})
 	for i, t := range tracks {
-		row := []string{strconv.Itoa(i + 1), t.Song, fmt.Sprintf("%.2f", t.Score), t.Category, t.Reason, strconv.Itoa(t.Listeners), strconv.Itoa(t.Streams), strconv.Itoa(t.Saves), strconv.Itoa(t.PlaylistAdds), fmt.Sprintf("%.4f", t.SaveRate), fmt.Sprintf("%.4f", t.StreamsPerListener), t.ReleaseDate, strconv.FormatBool(t.LowConfidence)}
+		row := []string{strconv.Itoa(i + 1), t.Song, fmt.Sprintf("%.2f", t.Score), t.Category, t.Reason, strconv.Itoa(t.Listeners), strconv.Itoa(t.Streams), strconv.Itoa(t.Saves), strconv.Itoa(t.PlaylistAdds), fmt.Sprintf("%.4f", t.SaveRate), fmt.Sprintf("%.4f", t.StreamsPerListener), fmt.Sprintf("%.4f", t.SaveLift), fmt.Sprintf("%.4f", t.RepeatLift), t.ReleaseDate, strconv.FormatBool(t.LowConfidence)}
 		if err := w.Write(row); err != nil {
 			return err
 		}

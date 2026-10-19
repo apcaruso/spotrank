@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="data:," />
+    <title>spotrank</title>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <h1>spotrank</h1>
+        <p>Find the best Meta ads candidates in a Spotify for Artists songs export. Everything runs in your browser.</p>
+      </header>
+
+      <main>
+        <div class="section">
+          <label id="drop" class="drop">
+            <input id="file" class="visually-hidden" type="file" accept=".csv,text/csv" />
+            <strong id="drop-title">Drop your CSV here</strong>
+            <span id="drop-hint">or click to choose a file · needs song, listeners, streams, saves</span>
+          </label>
+        </div>
+
+        <section id="results" hidden>
+          <div class="section toolbar">
+            <div class="fields">
+              <label class="field" title="Below this, a track is a low-confidence sample and its score is penalized">
+                <span>Min listeners</span>
+                <input id="min-listeners" type="number" min="0" step="100" value="500" />
+              </label>
+              <label class="field" title="Tracks need this many listeners to be scale or reach">
+                <span>Proven audience</span>
+                <input id="proven" type="number" min="0" step="500" value="2000" />
+              </label>
+            </div>
+            <button id="download" class="button" type="button">Download ranked CSV</button>
+          </div>
+
+          <details id="mapping" class="section mapping">
+            <summary>Column mapping</summary>
+            <div id="mapping-grid" class="mapping-grid"></div>
+          </details>
+
+          <div id="error" class="section error" hidden></div>
+
+          <div id="output">
+            <p id="summary" class="summary"></p>
+            <nav id="tabs" class="tabs" aria-label="Filter by category"></nav>
+            <div class="table-wrap"><table id="table"></table></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="overlay" class="overlay" hidden><span>Drop to rank</span></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

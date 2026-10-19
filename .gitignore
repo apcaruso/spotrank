@@ -9,6 +9,10 @@ bin/
 pkg/
 vendor/
 
+# Web UI
+node_modules/
+web/dist/
+
 # Coverage/profiling
 coverage.out
 *.cover

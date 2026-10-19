@@ -11,7 +11,7 @@ Not every track with many streams is a good ad candidate.
 For paid acquisition, especially on Meta, the best tracks are usually the ones that combine:
 
 - enough listener volume
-- high save rate
+- a high save rate for their audience size
 - strong repeat listening
 - recent momentum, when release date is available
 
@@ -19,7 +19,7 @@ For paid acquisition, especially on Meta, the best tracks are usually the ones t
 
 ## Input
 
-Use a CSV export from Spotify for Artists, preferably from the Songs table.
+Use a CSV export from Spotify for Artists, preferably from the Songs table. A window of about the last 12 months works well: long enough to have volume, without the release-week spike from existing fans that an all-time export includes.
 
 Required columns:
 
@@ -112,6 +112,12 @@ Change the minimum listener threshold:
 spotrank songs.csv -min-listeners 1000
 ```
 
+Change how many listeners a track needs before it can be `scale` or `reach`:
+
+```bash
+spotrank songs.csv -proven 5000
+```
+
 Export the full ranking:
 
 ```bash
@@ -124,21 +130,36 @@ spotrank songs.csv -out ranked.csv
 Loaded 64 tracks
 Ranking mode: meta-ads
 Minimum listeners: 500
+Proven audience: 2000 listeners
 
 Top 5 ad candidates:
 
 1. drawn the line
-   Score: 63.0 | Category: scale
+   Score: 89.8 | Category: scale
    Listeners: 9778 | Streams: 19771 | Saves: 675
-   Save rate: 6.9% | Streams/listener: 2.02 | Release: 2023-11-10
-   Why: high save rate and strong repeat listening
+   Save rate: 6.9% (1.7× similar) | Streams/listener: 2.02 (1.2× similar) | Release: 2023-11-10
+   Why: proven audience; saves 1.7× and repeats 1.2× similar-size tracks
 
-2. parasocial activity
-   Score: 62.9 | Category: scale
-   Listeners: 825 | Streams: 1849 | Saves: 76
-   Save rate: 9.2% | Streams/listener: 2.24 | Release: 2025-01-17
-   Why: high save rate and strong repeat listening
+2. monkey island (CMPLEX Remix)
+   Score: 85.6 | Category: scale
+   Listeners: 8902 | Streams: 16214 | Saves: 518
+   Save rate: 5.8% (1.4× similar) | Streams/listener: 1.82 (1.1× similar) | Release: 2025-04-18
+   Why: proven audience; saves 1.4× and repeats 1.1× similar-size tracks
 ```
+
+## Web UI
+
+`web/` contains a browser version written in TypeScript. Drag a CSV onto the page and it shows the full ranking, with category filters, the minimum-listeners and proven-audience controls, a column mapping panel, and a ranked CSV download in the same format as `-out`.
+
+The file never leaves your machine: parsing and scoring run in the browser, using a port of the CLI's model (`web/src/rank.ts`). Keep it in sync with `main.go` when the scoring changes.
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+`npm run build` writes a static site to `web/dist/` that can be hosted anywhere.
 
 ## Manual column mapping
 
@@ -173,41 +194,63 @@ Base weights:
 ```text
 listeners              25%
 streams                15%
-save rate              30%
-streams per listener   20%
+save lift              30%
+repeat lift            20%
+recency                10%   (only when release date is available)
 ```
 
-If `playlist adds` is available, it is added as another intent signal.
+Save rate is `saves / listeners`. If `playlist adds` is available, playlist adds count as saves: `(saves + playlist adds) / listeners`.
 
-If `release date` is available, the tool adds a small recency component. This helps identify tracks that may still have current momentum.
+### Compared with similar-size tracks
 
-Scores are based on percentile ranks rather than raw values. This prevents one very large track from flattening the rest of the catalog.
+Save rate falls sharply as a track's audience grows. Small tracks are heard almost only by fans (and often pick up saves when someone saves the whole release), while big tracks reach strangers through algorithmic playlists. A 6% save rate is excellent at 10,000 listeners and below average at 800.
+
+So save rate and streams per listener are not judged in absolute terms. Each track is compared with the 6 tracks of the catalog closest to it in listeners (about half above, half below), using their median:
+
+```text
+save lift    = save rate / median save rate of similar-size tracks
+repeat lift  = streams per listener / median of similar-size tracks
+```
+
+A save lift of `1.7×` means the track saves 70% more than tracks with a comparable audience. This adapts automatically to genre, export window and catalog size, without relying on universal benchmarks. It also means categories describe the best tracks of *your* catalog: real campaign results are still the final test.
+
+Scores use percentile ranks rather than raw values. This prevents one very large track from flattening the rest of the catalog.
 
 ## Categories
 
 Each track receives a category:
 
 ```text
-scale    strong candidate for paid ads
-test     worth testing with a small budget
-reach    high volume, acceptable intent
-niche    low volume, unusually high intent
+scale    proven audience and above-peer intent: put budget behind it
+test     above-peer intent, but not enough volume (or repeat) to scale yet
+reach    proven audience, roughly average intent for its size
+niche    small sample, but clearly above similar-size tracks
 ignore   weak or unreliable paid-acquisition signal
 ```
 
-The category is not based on score alone. It also considers save rate, repeat listening, and sample size.
+Rules, checked in order:
 
-## Low-confidence samples
-
-By default, tracks with fewer than 500 listeners are marked as low-confidence.
-
-You can change this:
-
-```bash
-spotrank songs.csv -min-listeners 100
+```text
+niche    below -min-listeners, at least 100 listeners, save lift ≥ 1.25, repeat lift ≥ 1.0
+ignore   any other track below -min-listeners
+scale    at least -proven listeners, save lift ≥ 1.1, repeat lift ≥ 1.0, streams/listener ≥ 1.5
+test     save lift ≥ 1.1, repeat lift ≥ 0.95, streams/listener ≥ 1.5
+reach    at least -proven listeners, save lift ≥ 0.8
+ignore   everything else
 ```
 
-Small samples can produce misleading save rates, so low-confidence tracks are penalized in the final score.
+## Sample size
+
+Two listener thresholds control how much a track's numbers are trusted:
+
+- `-min-listeners` (default 500): below this a track is a low-confidence sample. Its score is multiplied by 0.75 and it can only be `niche` or `ignore`.
+- `-proven` (default 2000): a track needs this many listeners to be `scale` or `reach`. Between the two thresholds it can be at most `test`.
+
+At a 5% save rate the uncertainty is about ±1 point with 500 listeners and about ±0.5 with 2,000, so smaller differences between tracks are mostly noise.
+
+```bash
+spotrank songs.csv -min-listeners 300 -proven 1000
+```
 
 ## Export format
 
@@ -231,6 +274,8 @@ saves
 playlist_adds
 save_rate
 streams_per_listener
+save_lift
+repeat_lift
 release_date
 low_confidence
 ```
