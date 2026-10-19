@@ -3,29 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#faf6ee" />
     <link rel="icon" href="data:," />
     <title>spotrank</title>
   </head>
   <body>
-    <div class="shell">
+    <div class="page">
       <header class="top">
-        <h1>spotrank</h1>
-        <p>Find the best Meta ads candidates in a Spotify for Artists songs export. Everything runs in your browser.</p>
+        <div class="brand">
+          <span class="logo" data-art="scale"></span>
+          <div>
+            <h1>spotrank</h1>
+            <p>Find which of your tracks deserve Meta ads budget. Everything stays in your browser.</p>
+          </div>
+        </div>
+        <div class="vine" data-art="vine"></div>
       </header>
 
       <main>
-        <div class="section">
-          <label id="drop" class="drop">
-            <input id="file" class="visually-hidden" type="file" accept=".csv,text/csv" />
-            <strong id="drop-title">Drop your CSV here</strong>
-            <span id="drop-hint">or click to choose a file · needs song, listeners, streams, saves</span>
-          </label>
-        </div>
+        <label id="drop" class="drop">
+          <input id="file" class="visually-hidden" type="file" accept=".csv,text/csv" />
+          <span class="drop-art" data-art="niche"></span>
+          <strong id="drop-title">Drop your Spotify for Artists CSV</strong>
+          <span id="drop-hint">or click to choose a file · needs song, listeners, streams, saves</span>
+        </label>
 
         <section id="results" hidden>
-          <div class="section toolbar">
-            <div class="fields">
+          <div class="toolbar">
+            <p id="summary" class="summary"></p>
+            <div class="controls">
               <label class="field" title="Below this, a track is a low-confidence sample and its score is penalized">
                 <span>Min listeners</span>
                 <input id="min-listeners" type="number" min="0" step="100" value="500" />
@@ -34,27 +40,38 @@
                 <span>Proven audience</span>
                 <input id="proven" type="number" min="0" step="500" value="2000" />
               </label>
+              <button id="download" class="button" type="button">Download ranked CSV</button>
             </div>
-            <button id="download" class="button" type="button">Download ranked CSV</button>
           </div>
 
-          <details id="mapping" class="section mapping">
+          <details id="mapping" class="mapping">
             <summary>Column mapping</summary>
             <div id="mapping-grid" class="mapping-grid"></div>
           </details>
 
-          <div id="error" class="section error" hidden></div>
+          <div id="error" class="error" hidden></div>
 
           <div id="output">
-            <p id="summary" class="summary"></p>
-            <nav id="tabs" class="tabs" aria-label="Filter by category"></nav>
-            <div class="table-wrap"><table id="table"></table></div>
+            <section id="picks" class="picks" hidden>
+              <h2 id="picks-title"></h2>
+              <p id="picks-note" class="lede"></p>
+              <div id="picks-grid" class="picks-grid"></div>
+            </section>
+
+            <section class="ranking">
+              <h2>Full ranking</h2>
+              <nav id="tabs" class="tabs" aria-label="Filter by category"></nav>
+              <p id="tab-note" class="lede"></p>
+              <div class="table-wrap"><table id="table"></table></div>
+            </section>
           </div>
         </section>
       </main>
     </div>
 
-    <div id="overlay" class="overlay" hidden><span>Drop to rank</span></div>
+    <div id="overlay" class="overlay" hidden>
+      <div><span class="overlay-art" data-art="niche"></span>Drop to rank</div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

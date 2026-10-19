@@ -1,5 +1,7 @@
+import "@fontsource-variable/fraunces/soft.css";
 import "./style.css";
 import { parseCSV } from "./csv.ts";
+import { ART, icon } from "./icons.ts";
 import {
   CATEGORIES,
   COLUMNS,
@@ -12,6 +14,15 @@ import {
   type Cols,
   type Track,
 } from "./rank.ts";
+
+// What each category means, in the garden's terms.
+const ABOUT: Record<Category, string> = {
+  scale: "In bloom: proven audience and saves above similar-size tracks. Put budget behind these.",
+  test: "Budding: strong intent, but not enough volume or repeat listening yet. Test with a small budget.",
+  reach: "Leafy: a big audience with average intent for its size. Good for reach, less for conversions.",
+  niche: "Seedling: a small sample, but clearly above similar-size tracks. A cheap test at most.",
+  ignore: "Dormant: a weak or unreliable signal for paid ads.",
+};
 
 interface State {
   fileName: string;
@@ -39,11 +50,20 @@ const mappingGrid = $("mapping-grid");
 const errorBox = $("error");
 const output = $("output");
 const summary = $("summary");
+const picks = $("picks");
+const picksTitle = $("picks-title");
+const picksNote = $("picks-note");
+const picksGrid = $("picks-grid");
 const tabs = $("tabs");
+const tabNote = $("tab-note");
 const table = $<HTMLTableElement>("table");
 const overlay = $("overlay");
 
 const int = new Intl.NumberFormat("en-US");
+
+for (const el of document.querySelectorAll<HTMLElement>("[data-art]")) {
+  el.innerHTML = ART[el.dataset.art as keyof typeof ART];
+}
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -90,7 +110,7 @@ function renderMapping() {
         ...headers.map((name, i) => h("option", { value: String(i) }, name || `(column ${i + 1})`)),
       );
       select.value = String(cols[col.name]);
-      return h("label", { class: "field" }, col.label + (col.required ? " *" : ""), select);
+      return h("label", { class: "field" }, h("span", {}, col.label + (col.required ? " *" : "")), select);
     }),
   );
 }
@@ -119,6 +139,7 @@ function update() {
   output.hidden = false;
   downloadButton.disabled = false;
   renderSummary(skipped);
+  renderPicks();
   renderTabs();
   renderTable();
 }
@@ -128,10 +149,11 @@ function showError(title: string, detail: string) {
   errorBox.hidden = false;
   output.hidden = true;
   downloadButton.disabled = true;
+  summary.replaceChildren();
 }
 
 function renderSummary(skipped: string[]) {
-  const parts: (Node | string)[] = [`Loaded ${int.format(state!.ranked.length)} tracks`];
+  const parts: (Node | string)[] = [`${int.format(state!.ranked.length)} tracks ranked`];
   if (skipped.length > 0) {
     parts.push(
       " · ",
@@ -144,6 +166,39 @@ function renderSummary(skipped: string[]) {
     );
   }
   summary.replaceChildren(...parts);
+}
+
+// The answer to "what should I advertise?": tracks in bloom, or the best buds
+// when nothing has bloomed yet.
+function renderPicks() {
+  const { ranked } = state!;
+  const bloom = ranked.filter((t) => t.category === "scale");
+  const shown = bloom.length > 0 ? bloom.slice(0, 6) : ranked.filter((t) => t.category === "test").slice(0, 3);
+  picks.hidden = shown.length === 0;
+  if (shown.length === 0) return;
+
+  picksTitle.textContent = bloom.length > 0 ? "Ready to bloom" : "Nothing in full bloom yet";
+  picksNote.textContent =
+    bloom.length > 0
+      ? "Proven audience and saves above similar-size tracks. Start your ads here."
+      : "No track has a proven audience with strong intent yet. These are the best ones to test first.";
+  picksGrid.replaceChildren(
+    ...shown.map((t) =>
+      h(
+        "article",
+        { class: `pick ${t.category}` },
+        h("div", { class: "pick-top" }, icon(t.category), h("span", { class: "pick-rank" }, `#${ranked.indexOf(t) + 1}`), scoreRing(t.score)),
+        h("h3", {}, t.song),
+        h(
+          "p",
+          { class: "pick-lifts" },
+          h("span", {}, h("strong", {}, `${t.saveLift.toFixed(1)}×`), " saves"),
+          h("span", {}, h("strong", {}, `${t.repeatLift.toFixed(1)}×`), " repeats"),
+        ),
+        h("p", { class: "pick-meta" }, `vs similar-size tracks · ${int.format(t.listeners)} listeners · ${percent(t.saveRate)} save rate`),
+      ),
+    ),
+  );
 }
 
 function renderTabs() {
@@ -163,10 +218,13 @@ function renderTabs() {
             renderTable();
           },
         },
-        h("span", { class: "tab-label" }, value ?? "all", h("span", { class: "count" }, String(count(value)))),
+        ...(value ? [icon(value)] : []),
+        value ?? "all",
+        h("span", { class: "count" }, String(count(value))),
       ),
     ),
   );
+  tabNote.textContent = filter ? ABOUT[filter] : "Every track, best ad candidates first.";
 }
 
 function renderTable() {
@@ -175,43 +233,47 @@ function renderTable() {
   const hasRelease = cols.releaseDate >= 0;
 
   const peerNote = "× compares with the 6 tracks closest in listeners";
-  const heads: [string, string?, string?][] = [
-    ["#", "num"],
-    ["Song"],
-    ["Score"],
-    ["Category"],
-    ["Listeners", "num"],
-    ["Streams", "num"],
-    ["Saves", "num"],
-    ...(hasAdds ? [["Playlist adds", "num"] as [string, string]] : []),
-    ["Save rate", "num", `${hasAdds ? "(saves + playlist adds)" : "saves"} / listeners; ${peerNote}`],
-    ["Streams / listener", "num", `streams / listeners; ${peerNote}`],
-    ...(hasRelease ? [["Release"] as [string]] : []),
-    ["Why"],
+  const heads: [string, string, string?][] = [
+    ["#", "c-rank"],
+    ["Track", "c-track"],
+    ["Category", "c-cat"],
+    ["Score", "c-score"],
+    ["Listeners", "c-listeners num"],
+    ["Save rate", "c-save num", `${hasAdds ? "(saves + playlist adds)" : "saves"} / listeners; ${peerNote}`],
+    ["Streams / listener", "c-repeat num", `streams / listeners; ${peerNote}`],
+    ["Why", "c-why"],
   ];
 
   const rows = ranked.flatMap((t, i) => {
     if (filter && t.category !== filter) return [];
-    const song = h("td", { class: "song" }, t.song);
-    if (t.lowConfidence) {
-      song.append(h("span", { class: "low", title: "Fewer listeners than the minimum: score penalized" }, "low sample"));
-    }
+    const notes = [hasRelease && t.releaseDate ? `released ${t.releaseDate}` : "", t.lowConfidence ? "low sample" : ""];
+    const saves = `${int.format(t.saves)} saves${hasAdds ? ` + ${int.format(t.playlistAdds)} playlist adds` : ""}`;
     return [
       h(
         "tr",
         {},
-        h("td", { class: "num muted" }, String(i + 1)),
-        song,
-        h("td", { class: "score" }, h("span", { class: "score-value" }, t.score.toFixed(1)), scoreBar(t.score)),
-        h("td", {}, h("span", { class: `badge ${t.category}` }, t.category)),
-        h("td", { class: "num" }, int.format(t.listeners)),
-        h("td", { class: "num" }, int.format(t.streams)),
-        h("td", { class: "num" }, int.format(t.saves)),
-        ...(hasAdds ? [h("td", { class: "num" }, int.format(t.playlistAdds))] : []),
-        h("td", { class: "num" }, `${(100 * t.saveRate).toFixed(1)}%`, liftTag(t.saveLift)),
-        h("td", { class: "num" }, t.streamsPerListener.toFixed(2), liftTag(t.repeatLift)),
-        ...(hasRelease ? [h("td", { class: "nowrap" }, t.releaseDate)] : []),
-        h("td", { class: "why" }, t.reason),
+        h("td", { class: "c-rank" }, String(i + 1)),
+        h(
+          "td",
+          { class: "c-track" },
+          h("span", { class: "track-name" }, h("span", { class: "rank-inline" }, `${i + 1}`), t.song),
+          h(
+            "span",
+            { class: "track-sub", title: t.lowConfidence ? "Fewer listeners than the minimum: score penalized" : "" },
+            notes.filter(Boolean).join(" · "),
+          ),
+        ),
+        h("td", { class: "c-cat" }, h("span", { class: `badge ${t.category}` }, icon(t.category), t.category)),
+        cell("c-score", "Score", scoreRing(t.score)),
+        cell("c-listeners num", "Listeners", int.format(t.listeners)),
+        cell(
+          "c-save num",
+          "Save rate",
+          h("span", { title: `${saves} / ${int.format(t.listeners)} listeners` }, percent(t.saveRate)),
+          liftTag(t.saveLift),
+        ),
+        cell("c-repeat num", "Streams / listener", t.streamsPerListener.toFixed(2), liftTag(t.repeatLift)),
+        h("td", { class: "c-why" }, t.reason),
       ),
     ];
   });
@@ -222,16 +284,27 @@ function renderTable() {
   );
 }
 
+// A table cell that keeps its column name, shown as a label on phone-sized cards.
+function cell(className: string, label: string, ...children: (Node | string)[]) {
+  const td = h("td", { class: className }, ...children);
+  td.dataset.label = label;
+  return td;
+}
+
 // Highlights lifts that clear the test/scale bar (1.1) or fall below reach (0.8).
 function liftTag(lift: number) {
   const tone = lift >= 1.1 ? " up" : lift < 0.8 ? " down" : "";
   return h("span", { class: `lift${tone}` }, `${lift.toFixed(1)}×`);
 }
 
-function scoreBar(score: number) {
-  const fill = h("span");
-  fill.style.width = `${score}%`;
-  return h("span", { class: "bar" }, fill);
+function scoreRing(score: number) {
+  const ring = h("span", { class: "ring" });
+  ring.style.setProperty("--p", score.toFixed(1));
+  return h("span", { class: "score" }, ring, h("span", { class: "score-value" }, score.toFixed(1)));
+}
+
+function percent(rate: number) {
+  return `${(100 * rate).toFixed(1)}%`;
 }
 
 function download() {
