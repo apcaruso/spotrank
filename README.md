@@ -1,8 +1,21 @@
 # spotrank
 
-`spotrank` is a small CLI tool that ranks Spotify for Artists song exports and identifies which tracks are better candidates for Meta ads.
+`spotrank` ranks Spotify for Artists song exports and identifies which tracks are better candidates for Meta ads. It comes as a Go CLI and as a web UI where you drop the CSV and get the results.
 
 It reads a CSV export, detects the relevant columns, computes intent metrics such as save rate and streams per listener, and returns a ranked list of tracks with a category and short explanation.
+
+![The spotrank web UI: the tracks ready for ad budget, as cards](docs/web-overview.png)
+
+## Try it
+
+`example.csv` is a made-up catalog of 24 tracks, so you can try `spotrank` without your own export:
+
+```bash
+go build -o spotrank main.go
+./spotrank example.csv
+```
+
+Or start the [web UI](#web-ui) and drop `example.csv` onto the page.
 
 ## Why
 
@@ -126,32 +139,32 @@ spotrank songs.csv -out ranked.csv
 
 ## Example output
 
+`spotrank example.csv -top 2`:
+
 ```text
-Loaded 64 tracks
+Loaded 24 tracks
 Ranking mode: meta-ads
 Minimum listeners: 500
 Proven audience: 2000 listeners
 
-Top 5 ad candidates:
+Top 2 ad candidates:
 
-1. drawn the line
-   Score: 89.8 | Category: scale
-   Listeners: 9778 | Streams: 19771 | Saves: 675
-   Save rate: 6.9% (1.7× similar) | Streams/listener: 2.02 (1.2× similar) | Release: 2023-11-10
-   Why: proven audience; saves 1.7× and repeats 1.2× similar-size tracks
+1. lost signal
+   Score: 88.3 | Category: scale
+   Listeners: 6140 | Streams: 12903 | Saves: 471 | Playlist adds: 96
+   Save rate: 9.2% (1.6× similar) | Streams/listener: 2.10 (1.2× similar) | Release: 2024-11-21
+   Why: proven audience; saves 1.6× and repeats 1.2× similar-size tracks
 
-2. monkey island (CMPLEX Remix)
-   Score: 85.6 | Category: scale
-   Listeners: 8902 | Streams: 16214 | Saves: 518
-   Save rate: 5.8% (1.4× similar) | Streams/listener: 1.82 (1.1× similar) | Release: 2025-04-18
-   Why: proven audience; saves 1.4× and repeats 1.1× similar-size tracks
+2. moth to neon
+   Score: 75.0 | Category: scale
+   Listeners: 2233 | Streams: 4895 | Saves: 194 | Playlist adds: 78
+   Save rate: 12.2% (1.4× similar) | Streams/listener: 2.19 (1.3× similar) | Release: 2026-09-08
+   Why: proven audience; saves 1.4× and repeats 1.3× similar-size tracks
 ```
 
 ## Web UI
 
-`web/` contains a browser version written in TypeScript. Drag a CSV onto the page and it shows the full ranking, with category filters, the minimum-listeners and proven-audience controls, a column mapping panel, and a ranked CSV download in the same format as `-out`.
-
-The file never leaves your machine: parsing and scoring run in the browser, using a port of the CLI's model (`web/src/rank.ts`). Keep it in sync with `main.go` when the scoring changes.
+`web/` contains a browser version written in TypeScript. Drag a CSV anywhere onto the page (or click to choose one) and the results appear right away. The file never leaves your machine: parsing and scoring run in the browser, using a port of the CLI's model (`web/src/rank.ts`) that produces the same ranking and the same exported CSV. Keep it in sync with `main.go` when the scoring changes.
 
 ```bash
 cd web
@@ -159,7 +172,30 @@ npm install
 npm run dev
 ```
 
-`npm run build` writes a static site to `web/dist/` that can be hosted anywhere.
+The page answers "what should I advertise?" first, then shows everything else:
+
+- **Ready to bloom**: a card for each `scale` track, with how much it saves and repeats compared with similar-size tracks. If nothing qualifies yet, the best `test` tracks are shown instead.
+- **Full ranking**: every track, best candidates first. Tabs filter by category and explain what each one means. Hover the save rate to see the raw counts behind it; green multipliers clear the bar for `test`/`scale`, red ones fall below `reach`.
+- **Controls**: the `-min-listeners` and `-proven` thresholds, manual column mapping when a column isn't detected, and a ranked CSV download in the same format as `-out`.
+
+Categories are drawn as growth stages: `scale` is in bloom, `test` a bud, `reach` a leaf, `niche` a seedling and `ignore` a dormant seed.
+
+![Full ranking with category tabs, score rings and multipliers vs similar-size tracks](docs/web-ranking.png)
+
+On phones, each row becomes a card:
+
+<p align="center"><img src="docs/web-mobile.png" alt="spotrank on a phone: ranking rows shown as cards" width="320"></p>
+
+### Deploy
+
+```bash
+cd web
+npm run build
+```
+
+This writes a static site (`index.html` plus `assets/`, about 165 KB) to `web/dist/`. Upload it to any static host, at a domain root or in a subfolder: asset paths are relative, so it also works on GitHub Pages under `/spotrank/`. No server is needed.
+
+On hosts that build from the repository (Netlify, Vercel, Cloudflare Pages), use `web` as the base directory, `npm run build` as the build command and `dist` as the output directory.
 
 ## Manual column mapping
 
@@ -218,15 +254,15 @@ Scores use percentile ranks rather than raw values. This prevents one very large
 
 ## Categories
 
-Each track receives a category:
+Each track receives a category (the web UI draws each one as a growth stage):
 
-```text
-scale    proven audience and above-peer intent: put budget behind it
-test     above-peer intent, but not enough volume (or repeat) to scale yet
-reach    proven audience, roughly average intent for its size
-niche    small sample, but clearly above similar-size tracks
-ignore   weak or unreliable paid-acquisition signal
-```
+| Category | In the web UI | Meaning |
+|---|---|---|
+| `scale` | in bloom | proven audience and above-peer intent: put budget behind it |
+| `test` | bud | above-peer intent, but not enough volume (or repeat) to scale yet |
+| `reach` | leaf | proven audience, roughly average intent for its size |
+| `niche` | seedling | small sample, but clearly above similar-size tracks |
+| `ignore` | dormant seed | weak or unreliable paid-acquisition signal |
 
 Rules, checked in order:
 
